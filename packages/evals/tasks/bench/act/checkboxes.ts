@@ -1,0 +1,37 @@
+import { defineBenchTask } from "../../../framework/defineTask.js";
+
+export default defineBenchTask(
+  { name: "checkboxes" },
+  async ({ debugUrl, sessionUrl, stagehand, page, logger }) => {
+    try {
+      await page.goto("https://stagehand-eval-sites.vercel.app/sites/checkboxes/");
+
+      await stagehand.act("click the 'baseball' option");
+
+      await stagehand.act("click the 'netball' option");
+
+      const baseballChecked = await page
+        .locator('input[type="checkbox"][name="sports"][value="baseball"]')
+        .isChecked();
+
+      const netballChecked = await page
+        .locator('input[type="checkbox"][name="sports"][value="netball"]')
+        .isChecked();
+
+      return {
+        _success: baseballChecked && netballChecked,
+        debugUrl,
+        sessionUrl,
+        logs: logger.getLogs(),
+      };
+    } catch (e) {
+      return {
+        _success: false,
+        error: e,
+        debugUrl,
+        sessionUrl,
+        logs: logger.getLogs(),
+      };
+    }
+  },
+);
