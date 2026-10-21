@@ -1,0 +1,67 @@
+import { z } from "zod";
+import { defineBenchTask } from "../../../framework/defineTask.js";
+
+export default defineBenchTask(
+  { name: "extract_aigrant_targeted" },
+  async ({ logger, debugUrl, sessionUrl, stagehand, page }) => {
+    try {
+      await page.goto("https://stagehand-eval-sites.vercel.app/sites/aigrant/");
+      // The locator engine prefix is required for XPath selectors.
+      const locator = page.locator("xpath=/html/body/div/ul[5]/li[28]");
+      const { data: company } = await stagehand.extract(
+        "Extract the company name.",
+        z.object({
+          company_name: z.string(),
+        }),
+        { locator },
+      );
+
+      const companyName = company.company_name;
+
+      const expectedName = {
+        company_name: "Coframe",
+      };
+
+      const nameMatches = companyName == expectedName.company_name;
+
+      if (!nameMatches) {
+        logger.error({
+          message: "extracted company name does not match expected",
+          level: 0,
+          auxiliary: {
+            expected: {
+              value: expectedName.company_name,
+              type: "string",
+            },
+            actual: {
+              value: companyName,
+              type: "string",
+            },
+          },
+        });
+        return {
+          _success: false,
+          error: "Company name does not match expected",
+          logs: logger.getLogs(),
+          debugUrl,
+          sessionUrl,
+        };
+      }
+
+      return {
+        _success: true,
+        logs: logger.getLogs(),
+        debugUrl,
+        sessionUrl,
+      };
+    } catch (error) {
+      return {
+        _success: false,
+        error: error instanceof Error ? error.message : String(error),
+        logs: logger.getLogs(),
+        debugUrl,
+        sessionUrl,
+      };
+    }
+  },
+);

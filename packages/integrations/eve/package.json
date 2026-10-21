@@ -1,0 +1,77 @@
+{
+  "name": "@browserbasehq/eve",
+  "version": "0.2.2",
+  "description": "Inherited Browserbase Eve integration included in BrowseActra.",
+  "keywords": [
+    "ai-agents",
+    "browser-automation",
+    "browserbase",
+    "eve",
+    "stagehand"
+  ],
+  "homepage": "https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent",
+  "bugs": {
+    "url": "https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent/issues"
+  },
+  "license": "MIT",
+  "author": "Browserbase",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent.git",
+    "directory": "packages/integrations/eve"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./tools": {
+      "types": "./dist/tools/index.d.ts",
+      "default": "./dist/tools/index.mjs"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm run stage:facade && eve extension build",
+    "prepack": "pnpm run build",
+    "stage:facade": "node scripts/stage-facade.mjs",
+    "test": "pnpm run stage:facade && vitest run",
+    "test:unit": "pnpm run stage:facade && vitest run",
+    "typecheck": "pnpm run stage:facade && tsc --noEmit"
+  },
+  "dependencies": {
+    "@browserbasehq/sdk": "catalog:",
+    "@browserbasehq/stagehand": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "ai": "catalog:eve",
+    "eve": "catalog:eve",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "eve": "^0.71.2"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "eve": {
+    "extension": {
+      "source": "./extension",
+      "dist": "./dist/extension",
+      "externalDependencies": [
+        "@browserbasehq/sdk",
+        "@browserbasehq/stagehand"
+      ]
+    }
+  }
+}

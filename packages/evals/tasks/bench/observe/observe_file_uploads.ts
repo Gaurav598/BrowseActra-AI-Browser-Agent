@@ -1,0 +1,50 @@
+import { defineBenchTask } from "../../../framework/defineTask.js";
+import { matchingSelector } from "../../../framework/observeSelectors.js";
+
+export default defineBenchTask(
+  { name: "observe_file_uploads" },
+  async ({ debugUrl, sessionUrl, stagehand, page, logger }) => {
+    try {
+      await page.goto("https://stagehand-eval-sites.vercel.app/sites/file-uploads-3/");
+
+      const { data: observations } = await stagehand.observe("find the file upload element");
+
+      if (observations.length === 0) {
+        return {
+          _success: false,
+          message: "observe returned no results",
+          observations,
+          debugUrl,
+          sessionUrl,
+          logs: logger.getLogs(),
+        };
+      }
+
+      const expectedLocator = `xpath=/html/body/input`;
+
+      // v3 compares backendNodeIds; the v4 Locator exposes no node identity
+      // so the same element-identity check is
+      // re-expressed in-page: resolve the observed selector and the expected
+      // selector and compare element references.
+      const foundMatch =
+        (await matchingSelector(page, observations[0].selector, [expectedLocator])) !== null;
+
+      return {
+        _success: foundMatch,
+        observations,
+        debugUrl,
+        sessionUrl,
+        logs: logger.getLogs(),
+      };
+    } catch (error) {
+      return {
+        _success: false,
+        error: error instanceof Error ? error.message : String(error),
+        message: "returned selector does not resolve to same node as expected",
+        debugUrl,
+        sessionUrl,
+        logs: logger.getLogs(),
+      };
+    }
+  },
+);

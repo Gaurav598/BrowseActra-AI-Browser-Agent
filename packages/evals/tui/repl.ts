@@ -1,0 +1,277 @@
+/**
+ * Interactive REPL for the evals CLI.
+ *
+ * Shares all parsing + dispatch with the single-shot argv path in
+ * cli.ts via tui/commandTree.ts and tui/commands/*.
+ */
+
+import * as readline from "node:readline";
+import { printBanner } from "./banner.js";
+import { dim, red, yellow } from "./format.js";
+import {
+  buildCommandTree,
+  dispatch,
+  renderPrompt,
+  tokenize,
+  type CommandContext,
+} from "./commandTree.js";
+import { discoverTasks } from "../framework/discovery.js";
+import type { TaskRegistry } from "../framework/types.js";
+import { getRuntimeTasksRoot } from "../runtimePaths.js";
+import { printExtendedWelcome, printTipLine } from "./welcome.js";
+import { snapshotEnv, renderInlineWarning } from "./welcomeStatus.js";
+import { isFirstRun, markFirstRunComplete } from "./welcomeState.js";
+import { welcomeEnabled } from "./welcome/index.js";
+import { abortActiveRun } from "../framework/activeRunCleanup.js";
+import { getActiveRun } from "./liveRun.js";
+
+export type ReplOptions = {
+  /** Suppress banner, welcome, and any inline warnings. Output is just the prompt. */
+  quiet?: boolean;
+};
+
+/**
+ * Silence readline's own echo (it writes each keystroke and the prompt to
+ * output through `_writeToOutput`, the documented-by-convention hook used for
+ * password prompts). Returns a function that restores echo and clears any
+ * input typed meanwhile.
+ */
+export function muteReadlineEcho(rl: readline.Interface): () => void {
+  const target = rl as unknown as { _writeToOutput?: (text: string) => void; line: string };
+  const original = target._writeToOutput;
+  if (typeof original !== "function") return () => {};
+  target._writeToOutput = () => {};
+  return () => {
+    target._writeToOutput = original;
+    // Ctrl-U only deletes left of the cursor: jump to the end first, or a
+    // suffix typed before an arrow key would reappear at the prompt.
+    if (target.line) {
+      rl.write(null, { ctrl: true, name: "e" });
+      rl.write(null, { ctrl: true, name: "u" });
+    }
+  };
+}
+
+export async function startRepl(entryDir: string, options: ReplOptions = {}): Promise<void> {
+  const quiet = options.quiet === true;
+  const noWelcome = quiet || Boolean(process.env.EVALS_NO_WELCOME);
+
+  const resolvedTasksRoot = getRuntimeTasksRoot();
+  let registry: TaskRegistry;
+  try {
+    registry = await discoverTasks(resolvedTasksRoot, false);
+  } catch (err) {
+    console.error(red(`  Failed to discover tasks: ${(err as Error).message}`));
+    process.exit(1);
+  }
+
+  // ─── Onboarding chrome ───────────────────────────────────────────────
+  // First-run-only welcome panel; otherwise just the banner + tip line.
+  // The only inline output about env state is the zero-keys warning,
+  // surfaced when no welcome panel is shown. Discovery count is NOT
+  // printed (use `list` or `evals doctor` instead).
+  // A welcome hand-off the user accepted; dispatched once the interface exists.
+  let pendingHandoff: string | null = null;
+
+  if (!quiet) {
+    const showExtendedWelcome = !noWelcome && isFirstRun(entryDir);
+    const wizardRan = showExtendedWelcome && welcomeEnabled(process.env.EVALS_WELCOME_WIZARD);
+
+    if (wizardRan) {
+      // Guided onboarding (opt-in via EVALS_WELCOME_WIZARD=1).
+      // Runs before readline exists, so it owns stdin outright. It paints
+      // its own banner and marks first-run itself on completion — Ctrl+C
+      // leaves the marker unset so it re-shows next launch.
+      const { runWelcome } = await import("./welcome/index.js");
+      const result = await runWelcome({
+        entryDir,
+        getRegistry: async () => registry,
+      });
+      if (result.status === "completed" && result.runNext) {
+        pendingHandoff = result.runNext;
+      } else if (result.status === "cancelled") {
+        const warning = renderInlineWarning(snapshotEnv());
+        if (warning && process.stdout.isTTY) console.log(warning);
+        printTipLine();
+      }
+    } else {
+      printBanner();
+      if (showExtendedWelcome) {
+        printExtendedWelcome({ snapshot: snapshotEnv(), registry });
+      } else {
+        const warning = renderInlineWarning(snapshotEnv());
+        if (warning && process.stdout.isTTY) {
+          console.log(warning);
+        }
+        printTipLine();
+      }
+    }
+    console.log("");
+    // Mark the marker pre-prompt so even an immediate Ctrl+C counts as
+    // "first-run complete" — we don't want to re-prompt on every relaunch
+    // when the user dismisses the welcome.
+    //
+    // Gated on `!quiet`: a `evals --quiet` invocation (often used by CI /
+    // automation that pipes into the REPL) must NOT burn the first-run
+    // marker, since the user never had a chance to see the welcome.
+    // `EVALS_NO_WELCOME=1`, on the other hand, IS an explicit dismissal,
+    // so it still marks the marker via the `else` branch above already
+    // having rendered the tip line — the user knows they're in the REPL.
+    // The wizard branch owns its own marking (see above).
+    if (!wizardRan) {
+      markFirstRunComplete(entryDir);
+    }
+  }
+
+  const contextPath: string[] = [];
+  const abortRef = { current: null as AbortController | null };
+
+  const tree = buildCommandTree();
+
+  let rlRef: readline.Interface | null = null;
+
+  const ctx: CommandContext = {
+    entryDir,
+    getRegistry: async () => registry,
+    setRegistry: (r) => {
+      registry = r;
+    },
+    abortRef,
+    contextPath,
+    // Hand stdin to a welcome flow: detach every keypress listener (readline's
+    // internal handler included — a paused interface still echoes keypresses
+    // into rl.line once someone else resumes the stream) and pause the
+    // interface so rl.resume() knows to restore flow after the flow's raw
+    // listener leaves stdin paused.
+    suspendInput: () => {
+      const rl = rlRef;
+      const listeners = process.stdin
+        .rawListeners("keypress")
+        .filter((l): l is (...a: unknown[]) => void => typeof l === "function");
+      for (const l of listeners) process.stdin.off("keypress", l);
+      rl?.pause();
+      return () => {
+        for (const l of listeners) process.stdin.on("keypress", l);
+        rl?.resume();
+      };
+    },
+    pushContext: (seg) => {
+      contextPath.push(seg);
+    },
+    popContext: () => {
+      contextPath.pop();
+    },
+    setContextPath: (path) => {
+      contextPath.length = 0;
+      for (const p of path) contextPath.push(p);
+    },
+  };
+
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: renderPrompt(contextPath),
+  });
+  rlRef = rl;
+
+  // Esc → either pop one context level (idle) or abort the in-flight run
+  // (cooperative; double-press escalates to aggressive — the runner closes
+  // V3 sessions immediately so the in-flight task throws).
+  let lastEscAt = 0;
+  const DOUBLE_ESC_WINDOW_MS = 1500;
+
+  const abortImmediately = (): void => {
+    if (!abortRef.current) return;
+    // A live board shows the stop itself; printing would break its redraw.
+    const board = getActiveRun();
+    if (board) board.setStopping("aggressive");
+    else console.log(red("\n  ✗ Aborting immediately…"));
+    void abortActiveRun(abortRef.current, "aggressive");
+  };
+
+  const onKeypress = (str: string, key: { name?: string } | undefined): void => {
+    if (key?.name !== "escape") {
+      // During a run, plain keys go to the live board (`v` logs, `?` help).
+      // Ctrl/Meta chords stay with readline: Ctrl+C is its SIGINT path.
+      const chord = (key as { ctrl?: boolean; meta?: boolean } | undefined) ?? {};
+      if (abortRef.current && !chord.ctrl && !chord.meta) {
+        getActiveRun()?.onKey?.(key?.name ?? str);
+      }
+      return;
+    }
+    if (!abortRef.current) {
+      // Idle Esc: pop one level if we're inside a context.
+      if (contextPath.length > 0) {
+        contextPath.pop();
+        rl.setPrompt(renderPrompt(contextPath));
+        process.stdout.write("\n");
+        rl.prompt();
+      }
+      return;
+    }
+    const now = Date.now();
+    const isDouble = now - lastEscAt < DOUBLE_ESC_WINDOW_MS;
+    lastEscAt = now;
+    if (isDouble) {
+      abortImmediately();
+    } else {
+      const board = getActiveRun();
+      if (board) board.setStopping("cooperative");
+      else
+        console.log(
+          yellow("\n  ⚠ Aborting after current task… (press Esc again to abort immediately)"),
+        );
+      void abortActiveRun(abortRef.current, "cooperative");
+    }
+  };
+  process.stdin.on("keypress", onKeypress);
+
+  // readline consumes Ctrl+C in raw terminal mode and emits SIGINT on the
+  // interface instead of necessarily delivering it to process.on("SIGINT").
+  rl.on("SIGINT", () => {
+    if (abortRef.current) abortImmediately();
+    else rl.close();
+  });
+
+  // While a command runs, readline must not echo keystrokes: a typed `v`
+  // would land on the live board. Anything typed is discarded afterwards.
+  const dispatchMuted = async (tokens: string[]): Promise<void> => {
+    const unmute = muteReadlineEcho(rl);
+    try {
+      await dispatch(tree, tokens, ctx);
+    } catch (err) {
+      console.error(red(`  Error: ${(err as Error).message}`));
+    } finally {
+      unmute();
+    }
+  };
+
+  rl.on("line", async (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      rl.setPrompt(renderPrompt(contextPath));
+      rl.prompt();
+      return;
+    }
+
+    await dispatchMuted(tokenize(trimmed));
+
+    rl.setPrompt(renderPrompt(contextPath));
+    rl.prompt();
+  });
+
+  rl.on("close", () => {
+    process.stdin.off("keypress", onKeypress);
+    console.log(dim("\n  Goodbye.\n"));
+    process.exit(0);
+  });
+
+  // An accepted welcome hand-off runs now — that's what "Enter to run it"
+  // promised — after every listener is in place, so Ctrl+C mid-run behaves
+  // exactly as it does for a typed command.
+  if (pendingHandoff) {
+    await dispatchMuted(tokenize(pendingHandoff));
+    rl.setPrompt(renderPrompt(contextPath));
+  }
+  rl.prompt();
+}

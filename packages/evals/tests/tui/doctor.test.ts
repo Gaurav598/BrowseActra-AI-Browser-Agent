@@ -1,0 +1,266 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { handleDoctor } from "../../tui/commands/doctor.js";
+
+const PROVIDER_KEYS = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "GEMINI_API_KEY",
+  "BROWSERBASE_API_KEY",
+  "BROWSERBASE_PROJECT_ID",
+  "BB_API_KEY",
+  "BB_PROJECT_ID",
+  "BRAINTRUST_API_KEY",
+  "EVAL_TRACE_TRANSPORT",
+  "BRAINTRUST_PROJECT_NAME",
+  "LANGSMITH_PROJECT",
+  "LANGSMITH_API_KEY",
+  "LANGCHAIN_API_KEY",
+  "LANGSMITH_TRACING",
+];
+
+const savedEnv: Record<string, string | undefined> = {};
+const tempDirs: string[] = [];
+
+type DoctorJsonReport = {
+  verdict: string;
+  reasons: string[];
+  [key: string]: unknown;
+};
+
+function clearProviderKeys(): void {
+  for (const key of PROVIDER_KEYS) {
+    savedEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+}
+
+function restoreProviderKeys(): void {
+  for (const key of PROVIDER_KEYS) {
+    if (savedEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = savedEnv[key];
+  }
+}
+
+function makeTempEntryDir(defaults?: Record<string, unknown>): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "evals-doctor-"));
+  tempDirs.push(dir);
+  fs.writeFileSync(
+    path.join(dir, "evals.config.json"),
+    JSON.stringify({ defaults: defaults ?? { env: "local", trials: 3 }, benchmarks: {} }, null, 2),
+  );
+  return dir;
+}
+
+async function runDoctorJson(
+  entryDir: string,
+): Promise<{ exit: number; report: DoctorJsonReport }> {
+  const chunks: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    chunks.push(args.map((a) => (typeof a === "string" ? a : String(a))).join(" "));
+  });
+  let exit: number;
+  try {
+    exit = await handleDoctor(["--json"], entryDir);
+  } finally {
+    spy.mockRestore();
+  }
+  const out = chunks.join("\n");
+  return { exit, report: JSON.parse(out) as DoctorJsonReport };
+}
+
+beforeEach(() => clearProviderKeys());
+afterEach(() => {
+  restoreProviderKeys();
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  }
+  vi.restoreAllMocks();
+});
+
+describe("handleDoctor --json", () => {
+  it("always exits 0 even on fail verdict", async () => {
+    const entryDir = makeTempEntryDir();
+    const { exit, report } = await runDoctorJson(entryDir);
+    expect(exit).toBe(0);
+    expect(report.verdict).toBe("fail"); // zero provider keys
+  });
+
+  it("emits the full schema (verdict, runtime, config, discovery, keys, reasons)", async () => {
+    const entryDir = makeTempEntryDir();
+    const { report } = await runDoctorJson(entryDir);
+    expect(report).toHaveProperty("verdict");
+    expect(report).toHaveProperty("runtime.node");
+    expect(report).toHaveProperty("runtime.mode");
+    expect(report).toHaveProperty("config.path");
+    expect(report).toHaveProperty("config.env");
+    expect(report).toHaveProperty("discovery.ok");
+    expect(report).toHaveProperty("keys.openai.state");
+    expect(report).toHaveProperty("keys.browserbase.apiKey");
+    expect(Array.isArray(report.reasons)).toBe(true);
+  });
+});
+
+describe("handleDoctor tracing block", () => {
+  it("reports defaults when nothing is configured", async () => {
+    const entryDir = makeTempEntryDir();
+    const { report } = await runDoctorJson(entryDir);
+    expect(report.tracing).toEqual({
+      transport: { value: null, source: "none" },
+      braintrustProject: { value: null, source: "none" },
+      langsmithProject: { value: null, source: "none" },
+      langsmithEnabled: false,
+    });
+  });
+
+  it("resolves env over evals.config.json tracing", async () => {
+    const entryDir = makeTempEntryDir();
+    fs.writeFileSync(
+      path.join(entryDir, "evals.config.json"),
+      JSON.stringify({
+        defaults: {},
+        benchmarks: {},
+        tracing: { transport: "otel", braintrustProject: "from-config" },
+      }),
+    );
+    process.env.BRAINTRUST_PROJECT_NAME = "from-env";
+    const { report } = await runDoctorJson(entryDir);
+    const tracing = report.tracing as Record<string, { value: string | null; source: string }>;
+    expect(tracing.transport).toEqual({ value: "otel", source: "config" });
+    expect(tracing.braintrustProject).toEqual({ value: "from-env", source: "env" });
+  });
+
+  it("reports an unrecognized transport as a native fallback and warns", async () => {
+    const entryDir = makeTempEntryDir();
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.EVAL_TRACE_TRANSPORT = "jaeger";
+    const { report } = await runDoctorJson(entryDir);
+    const tracing = report.tracing as { transport: Record<string, unknown> };
+    expect(tracing.transport).toEqual({ value: "native", source: "env", invalid: "jaeger" });
+    expect(report.verdict).toBe("warn");
+    expect(
+      report.reasons.some((r) => r.includes('Unrecognized EVAL_TRACE_TRANSPORT="jaeger"')),
+    ).toBe(true);
+  });
+
+  it("only reports LangSmith export as on under the otel transport", async () => {
+    const entryDir = makeTempEntryDir();
+    process.env.LANGSMITH_API_KEY = "ls";
+    process.env.LANGSMITH_TRACING = "true";
+    let { report } = await runDoctorJson(entryDir);
+    expect((report.tracing as { langsmithEnabled: boolean }).langsmithEnabled).toBe(false);
+
+    process.env.EVAL_TRACE_TRANSPORT = "otel";
+    ({ report } = await runDoctorJson(entryDir));
+    expect((report.tracing as { langsmithEnabled: boolean }).langsmithEnabled).toBe(true);
+  });
+
+  it("warns when otel is selected but no sink is configured", async () => {
+    const entryDir = makeTempEntryDir();
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.BROWSERBASE_API_KEY = "bb";
+    process.env.BROWSERBASE_PROJECT_ID = "pid";
+    process.env.BRAINTRUST_API_KEY = "bt";
+    process.env.EVAL_TRACE_TRANSPORT = "otel";
+    // Braintrust key present → sink exists → no tracing warning.
+    let { report } = await runDoctorJson(entryDir);
+    expect(report.reasons.some((r) => r.includes("no sink"))).toBe(false);
+
+    delete process.env.BRAINTRUST_API_KEY;
+    ({ report } = await runDoctorJson(entryDir));
+    expect(report.reasons.some((r) => r.includes("no sink"))).toBe(true);
+    expect(report.verdict).not.toBe("ok");
+  });
+});
+
+describe("handleDoctor verdicts", () => {
+  it("fail — zero provider keys", async () => {
+    const entryDir = makeTempEntryDir();
+    const { report } = await runDoctorJson(entryDir);
+    expect(report.verdict).toBe("fail");
+    expect(report.reasons.join(" ")).toMatch(/No provider API key/);
+  });
+
+  it("fail — env=browserbase with both BB vars missing", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const entryDir = makeTempEntryDir({ env: "browserbase", trials: 3 });
+    const { report } = await runDoctorJson(entryDir);
+    expect(report.verdict).toBe("fail");
+    expect(report.reasons.join(" ")).toMatch(/env=browserbase/);
+  });
+
+  it("warn — provider key present but Braintrust missing", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    const entryDir = makeTempEntryDir({ env: "local", trials: 3 });
+    const { report } = await runDoctorJson(entryDir);
+    expect(report.verdict).toBe("warn");
+    expect(report.reasons.join(" ")).toMatch(/BRAINTRUST_API_KEY missing/);
+  });
+
+  it("warn — Browserbase partially configured", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.BRAINTRUST_API_KEY = "bt-test";
+    process.env.BROWSERBASE_API_KEY = "bb-test";
+    const entryDir = makeTempEntryDir({ env: "local", trials: 3 });
+    const { report } = await runDoctorJson(entryDir);
+    expect(report.verdict).toBe("warn");
+    expect(report.reasons.join(" ")).toMatch(/Browserbase is partially/);
+  });
+
+  it("ok — provider + Braintrust set, no BB needed (env=local)", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.BRAINTRUST_API_KEY = "bt-test";
+    const entryDir = makeTempEntryDir({ env: "local", trials: 3 });
+    const { report } = await runDoctorJson(entryDir);
+    expect(report.verdict).toBe("ok");
+    expect(report.reasons).toEqual([]);
+  });
+});
+
+describe("handleDoctor exit code", () => {
+  it("returns 1 on fail (human output)", async () => {
+    const entryDir = makeTempEntryDir();
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await handleDoctor([], entryDir);
+    spy.mockRestore();
+    expect(exit).toBe(1);
+  });
+
+  it("returns 0 on ok (human output)", async () => {
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.BRAINTRUST_API_KEY = "bt-test";
+    const entryDir = makeTempEntryDir({ env: "local", trials: 3 });
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await handleDoctor([], entryDir);
+    spy.mockRestore();
+    expect(exit).toBe(0);
+  });
+});
+
+describe("handleDoctor --help", () => {
+  it("prints help and exits 0 on --help", async () => {
+    const entryDir = makeTempEntryDir();
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await handleDoctor(["--help"], entryDir);
+    // Capture before restore — vitest's mockRestore wipes mock.calls
+    const text = spy.mock.calls.flat().join("\n");
+    spy.mockRestore();
+    expect(exit).toBe(0);
+    expect(text).toContain("evals doctor");
+    // --probe and --harness are public flags
+    expect(text).toContain("--probe");
+    expect(text).toContain("--harness");
+  });
+
+  it("prints help and exits 0 on -h", async () => {
+    const entryDir = makeTempEntryDir();
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = await handleDoctor(["-h"], entryDir);
+    spy.mockRestore();
+    expect(exit).toBe(0);
+  });
+});

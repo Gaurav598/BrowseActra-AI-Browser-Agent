@@ -1,0 +1,467 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import { describe, it, expect, beforeAll, afterAll, onTestFinished } from "vitest";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import fs from "node:fs";
+import path from "node:path";
+
+const exec = promisify(execFile);
+const repoRoot = path.resolve(__dirname, "..", "..", "..");
+const CLI_PATH = path.join(repoRoot, "packages", "evals", "cli.ts");
+const SOURCE_CONFIG = path.join(repoRoot, "packages", "evals", "evals.config.json");
+const CLI_CHILD_TIMEOUT_MS = 15_000;
+const CLI_TEST_TIMEOUT_MS = CLI_CHILD_TIMEOUT_MS + 2_000;
+// Every write the CLI makes (config set, first-run marker) lands here; the
+// tracked file is never touched.
+const LOCAL_CONFIG = path.join(repoRoot, "packages", "evals", "evals.config.local.json");
+
+// File-level snapshot/restore: any `evals run …` invocation through the
+// real CLI writes `_meta.firstRunCompletedAt` into the local config
+// (because the test runs in source mode). Restore at the end so the
+// developer's own overrides survive the test run.
+let __fileLevelConfigSnapshot: string;
+let __fileLevelLocalSnapshot: string | undefined;
+beforeAll(async () => {
+  __fileLevelConfigSnapshot = fs.readFileSync(SOURCE_CONFIG, "utf-8");
+  __fileLevelLocalSnapshot = fs.existsSync(LOCAL_CONFIG)
+    ? fs.readFileSync(LOCAL_CONFIG, "utf-8")
+    : undefined;
+  // Warm tsx's compile cache once so the first test doesn't pay the whole
+  // cold start against the 10s per-test budget (it sat at ~10.0s on CI).
+  await runCli(["--help"]);
+}, 40_000);
+afterAll(() => {
+  fs.writeFileSync(SOURCE_CONFIG, __fileLevelConfigSnapshot);
+  restoreLocalConfig(__fileLevelLocalSnapshot);
+});
+
+function restoreLocalConfig(snapshot: string | undefined): void {
+  if (snapshot === undefined) fs.rmSync(LOCAL_CONFIG, { force: true });
+  else fs.writeFileSync(LOCAL_CONFIG, snapshot);
+}
+
+function readLocalConfig(): Record<string, any> {
+  return fs.existsSync(LOCAL_CONFIG) ? JSON.parse(fs.readFileSync(LOCAL_CONFIG, "utf-8")) : {};
+}
+
+async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
+  try {
+    const execution = exec(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
+      cwd: repoRoot,
+      timeout: CLI_CHILD_TIMEOUT_MS,
+      killSignal: "SIGKILL",
+      env: { ...process.env, NODE_NO_WARNINGS: "1" },
+    });
+    // A test timeout must also stop its own CLI child. SIGTERM enters the
+    // CLI's async cleanup path, which is not a bounded subprocess deadline.
+    onTestFinished(() => {
+      if (execution.child.exitCode === null && execution.child.signalCode === null) {
+        execution.child.kill("SIGKILL");
+      }
+    });
+    const { stdout, stderr } = await execution;
+    return { stdout, stderr, code: 0 };
+  } catch (err: any) {
+    return {
+      stdout: err.stdout ?? "",
+      stderr: err.stderr ?? "",
+      code: err.code ?? 1,
+    };
+  }
+}
+
+function resetSourceWelcomeMeta(): void {
+  const config = readLocalConfig();
+  delete config._meta;
+  fs.writeFileSync(LOCAL_CONFIG, JSON.stringify(config, null, 2) + "\n");
+}
+
+function readSourceWelcomeCompletedAt(): string | undefined {
+  return readLocalConfig()._meta?.firstRunCompletedAt;
+}
+
+describe("CLI entrypoint", { timeout: CLI_TEST_TIMEOUT_MS }, () => {
+  it(
+    "shows help",
+    async () => {
+      const { stdout, code } = await runCli(["-h"]);
+      expect(code).toBe(0);
+      expect(stdout).toContain("Commands:");
+      expect(stdout).toContain("run");
+      expect(stdout).toContain("list");
+      expect(stdout).toContain("config");
+      expect(stdout).toContain("experiments");
+    },
+    CLI_TEST_TIMEOUT_MS,
+  );
+
+  it("shows experiments overview help", async () => {
+    const { stdout, code } = await runCli(["experiments"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("evals experiments");
+    expect(stdout).toContain("list");
+    expect(stdout).toContain("show");
+    expect(stdout).toContain("open");
+    expect(stdout).toContain("compare");
+  });
+
+  it("includes doctor in top-level help", async () => {
+    const { stdout, code } = await runCli(["-h"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("doctor");
+  });
+
+  it("shows doctor help via --help", async () => {
+    const { stdout, code } = await runCli(["doctor", "--help"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("evals doctor");
+    expect(stdout).toContain("--json");
+    // --probe is a public flag since the harness probe matrix landed.
+    expect(stdout).toContain("--probe");
+    expect(stdout).toContain("--harness");
+  });
+
+  it("doctor --json emits a parseable report", async () => {
+    const { stdout, code } = await runCli(["doctor", "--json"]);
+    // --json always exits 0 regardless of verdict
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout);
+    expect(payload).toHaveProperty("verdict");
+    expect(payload).toHaveProperty("runtime.node");
+    expect(payload).toHaveProperty("keys.openai");
+    expect(Array.isArray(payload.reasons)).toBe(true);
+  });
+
+  it("health is an alias for doctor", async () => {
+    const { stdout, code } = await runCli(["health", "--json"]);
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout);
+    expect(payload).toHaveProperty("verdict");
+  });
+
+  it("shows experiments compare help", async () => {
+    const { stdout, code } = await runCli(["experiments", "compare", "-h"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("evals experiments compare");
+    expect(stdout).toContain("--project");
+    expect(stdout).toContain("--out");
+  });
+
+  // Help is reachable three ways at every level: `--help`, `-h`, and the
+  // bare word `help` as the first positional after the verb. Each row pairs
+  // an argv with a substring that must appear in the resulting help output.
+  const helpCases: Array<{ args: string[]; contains: string }> = [
+    { args: ["help"], contains: "Commands:" },
+    { args: ["--help"], contains: "Commands:" },
+    { args: ["-h"], contains: "Commands:" },
+    { args: ["run", "help"], contains: "evals run" },
+    { args: ["run", "--help"], contains: "evals run" },
+    { args: ["run", "-h"], contains: "evals run" },
+    { args: ["list", "help"], contains: "evals list" },
+    { args: ["list", "--help"], contains: "evals list" },
+    { args: ["list", "-h"], contains: "evals list" },
+    { args: ["new", "help"], contains: "evals new" },
+    { args: ["new", "--help"], contains: "evals new" },
+    { args: ["new", "-h"], contains: "evals new" },
+    { args: ["config", "help"], contains: "evals config" },
+    { args: ["config", "--help"], contains: "evals config" },
+    { args: ["config", "-h"], contains: "evals config" },
+    { args: ["config", "set", "help"], contains: "evals config" },
+    { args: ["config", "set", "--help"], contains: "evals config" },
+    { args: ["config", "reset", "help"], contains: "evals config" },
+    { args: ["config", "path", "help"], contains: "evals config" },
+    { args: ["config", "core", "help"], contains: "evals config core" },
+    { args: ["config", "core", "--help"], contains: "evals config core" },
+    { args: ["config", "core", "-h"], contains: "evals config core" },
+    { args: ["config", "core", "set", "help"], contains: "evals config core" },
+    {
+      args: ["config", "core", "set", "--help"],
+      contains: "evals config core",
+    },
+    {
+      args: ["config", "core", "reset", "help"],
+      contains: "evals config core",
+    },
+    { args: ["config", "core", "path", "help"], contains: "evals config core" },
+    {
+      args: ["config", "core", "setup", "help"],
+      contains: "evals config core",
+    },
+    { args: ["experiments", "help"], contains: "evals experiments" },
+    { args: ["experiments", "--help"], contains: "evals experiments" },
+    { args: ["experiments", "-h"], contains: "evals experiments" },
+    {
+      args: ["experiments", "list", "help"],
+      contains: "evals experiments list",
+    },
+    {
+      args: ["experiments", "list", "--help"],
+      contains: "evals experiments list",
+    },
+    {
+      args: ["experiments", "show", "help"],
+      contains: "evals experiments show",
+    },
+    {
+      args: ["experiments", "open", "help"],
+      contains: "evals experiments open",
+    },
+    {
+      args: ["experiments", "compare", "help"],
+      contains: "evals experiments compare",
+    },
+  ];
+
+  it.each(helpCases)("accepts $args as a help invocation", async ({ args, contains }) => {
+    const { stdout, code } = await runCli(args);
+    expect(code).toBe(0);
+    expect(stdout).toContain(contains);
+  });
+
+  it(
+    "does not mark first-run complete for nested help invocations",
+    async () => {
+      resetSourceWelcomeMeta();
+
+      for (const args of [
+        ["config", "set", "--help"],
+        ["experiments", "compare", "--help"],
+      ]) {
+        const { stdout, code } = await runCli(args);
+        expect(code).toBe(0);
+        expect(stdout).toContain("evals");
+        expect(readSourceWelcomeCompletedAt()).toBeUndefined();
+      }
+    },
+    2 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+
+  // Regression: help interception must not reach into value positions.
+  // `config set <key> <value>` must surface a parse/value error, not silently
+  // print help — otherwise `--help` would be a magical sentinel anywhere.
+  it("does not swallow `--help` as a value in `config set`", async () => {
+    const { stdout, stderr, code } = await runCli(["config", "set", "trials", "--help"]);
+    expect(code).toBe(1);
+    const output = stdout + stderr;
+    expect(output).not.toContain("Commands:");
+    expect(output).toContain("trials must be a positive integer");
+  });
+
+  it("exports resolved bench flags into env overrides during dry-run", async () => {
+    const { stdout, code } = await runCli([
+      "run",
+      "act",
+      "--dry-run",
+      "-e",
+      "browserbase",
+      "--api",
+    ]);
+
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout);
+    expect(payload.normalizedTarget).toBe("act");
+    expect(payload.envOverrides.EVAL_ENV).toBe("BROWSERBASE");
+    expect(payload.envOverrides.USE_API).toBe("true");
+    expect(payload.envOverrides.EVAL_PROVIDER).toBeUndefined();
+    expect(payload.runOptions.harness).toBe("stagehand");
+    expect(payload.runOptions.verbose).toBe(false);
+  });
+
+  it("renders --preview as a human-readable plan", async () => {
+    const { stdout, code } = await runCli(["run", "act", "--preview"]);
+    expect(code).toBe(0);
+
+    // Header + sections — strip ANSI before substring checks.
+    // eslint-disable-next-line no-control-regex
+    const plain = stdout.replace(/\[[0-9;]*m/g, "");
+    expect(plain).toMatch(/Target:\s+act/);
+    expect(plain).toMatch(/Combinations \(/);
+    expect(plain).toMatch(/Tasks \(/);
+    expect(plain).toMatch(/Total:\s+\d+ run/);
+    // Should NOT be JSON.
+    expect(() => JSON.parse(stdout)).toThrow();
+  });
+
+  it("rejects --preview combined with --dry-run", async () => {
+    const { stdout, stderr, code } = await runCli(["run", "act", "--dry-run", "--preview"]);
+    expect(code).toBe(1);
+    expect(stdout + stderr).toContain("--preview and --dry-run are mutually exclusive");
+  });
+
+  it("fails fast on unknown flags instead of consuming the target", async () => {
+    const { stdout, stderr, code } = await runCli([
+      "run",
+      "--envr",
+      "browserbase",
+      "act",
+      "--dry-run",
+    ]);
+
+    expect(code).toBe(1);
+    expect(stdout + stderr).toContain('Unknown option "--envr"');
+  });
+
+  it("returns a non-zero exit code for invalid targets", async () => {
+    const { stdout, stderr, code } = await runCli(["run", "nonexistent_eval_xyz"]);
+
+    expect(code).toBe(1);
+    expect(stdout + stderr).toContain('No tasks found matching "nonexistent_eval_xyz"');
+  });
+
+  it("prints the source config path in source mode", async () => {
+    const { stdout, code } = await runCli(["config", "path"]);
+    expect(code).toBe(0);
+    expect(stdout.trim()).toBe(path.join(repoRoot, "packages", "evals", "evals.config.json"));
+  });
+
+  it(
+    "treats `>` as equivalent to a space separator (argv form)",
+    async () => {
+      const direct = await runCli(["config", "path"]);
+      const piped = await runCli(["config", ">", "path"]);
+      expect(piped.code).toBe(0);
+      expect(piped.stdout).toBe(direct.stdout);
+    },
+    2 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+
+  it(
+    "supports `>` chaining across multiple levels",
+    async () => {
+      const direct = await runCli(["config", "core", "path"]);
+      const piped = await runCli(["config", ">", "core", ">", "path"]);
+      expect(piped.code).toBe(0);
+      expect(piped.stdout).toBe(direct.stdout);
+    },
+    2 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+
+  it("strips a leading `evals` sigil token (no-op at root)", async () => {
+    // From a shell, `evals evals run act --dry-run` should resolve like
+    // `evals run act --dry-run` — the leading `evals` arg is the sigil.
+    const { stdout, code } = await runCli(["evals", "run", "act", "--dry-run"]);
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout);
+    expect(payload.normalizedTarget).toBe("act");
+  });
+});
+
+describe.sequential("core config", { timeout: CLI_TEST_TIMEOUT_MS }, () => {
+  // Tests mutate packages/evals/evals.config.local.json (the tracked file is
+  // read-only for the CLI). Each test starts without a local file; the
+  // file-level afterAll restores the developer's own.
+  function resetConfig(): void {
+    fs.rmSync(LOCAL_CONFIG, { force: true });
+  }
+
+  it("prints placeholder when no core section exists", async () => {
+    resetConfig();
+    const { stdout, code } = await runCli(["config", "core"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("Core configuration");
+    expect(stdout).toContain("runner default: understudy_code");
+  });
+
+  it("persists tool via `config core set tool`", async () => {
+    resetConfig();
+    const setResult = await runCli(["config", "core", "set", "tool", "understudy_code"]);
+    expect(setResult.code).toBe(0);
+    expect(setResult.stdout).toContain("Set core.tool to understudy_code");
+
+    const saved = readLocalConfig();
+    expect(saved.core?.tool).toBe("understudy_code");
+    // The tracked file is never written by `config set`.
+    expect(JSON.parse(fs.readFileSync(SOURCE_CONFIG, "utf-8")).core).toBeUndefined();
+  });
+
+  it(
+    "flows persisted core.tool into run dry-run output",
+    async () => {
+      resetConfig();
+      await runCli(["config", "core", "set", "tool", "understudy_code"]);
+
+      const { stdout, code } = await runCli(["run", "navigation/open", "--dry-run"]);
+      expect(code).toBe(0);
+      const payload = JSON.parse(stdout);
+      expect(payload.runOptions.coreToolSurface).toBe("understudy_code");
+    },
+    2 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+
+  it("rejects unknown tool", async () => {
+    resetConfig();
+    const { stdout, stderr, code } = await runCli([
+      "config",
+      "core",
+      "set",
+      "tool",
+      "not_a_real_tool",
+    ]);
+    expect(code).toBe(1);
+    expect(stdout + stderr).toContain('Invalid tool "not_a_real_tool"');
+  });
+
+  it("rejects setting startup without a tool", async () => {
+    resetConfig();
+    const { stdout, stderr, code } = await runCli([
+      "config",
+      "core",
+      "set",
+      "startup",
+      "tool_launch_local",
+    ]);
+    expect(code).toBe(1);
+    expect(stdout + stderr).toContain("Cannot set startup without a tool");
+  });
+
+  it(
+    "rejects startup unsupported by the chosen tool",
+    async () => {
+      resetConfig();
+      // cdp_code does not support tool_create_browserbase.
+      await runCli(["config", "core", "set", "tool", "cdp_code"]);
+      const { stdout, stderr, code } = await runCli([
+        "config",
+        "core",
+        "set",
+        "startup",
+        "tool_create_browserbase",
+      ]);
+      expect(code).toBe(1);
+      expect(stdout + stderr).toContain('Tool "cdp_code" does not support startup');
+    },
+    2 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+
+  it(
+    "auto-resets startup when a tool change invalidates it",
+    async () => {
+      resetConfig();
+      // cdp_code supports tool_attach_local_cdp; browse_cli does not.
+      await runCli(["config", "core", "set", "tool", "cdp_code"]);
+      await runCli(["config", "core", "set", "startup", "tool_attach_local_cdp"]);
+      const { stdout, code } = await runCli(["config", "core", "set", "tool", "browse_cli"]);
+      expect(code).toBe(0);
+      expect(stdout).toContain("Resetting startup");
+
+      const saved = readLocalConfig();
+      expect(saved.core?.tool).toBe("browse_cli");
+      expect(saved.core?.startup).toBeUndefined();
+    },
+    3 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+
+  it(
+    "reset clears the whole core section",
+    async () => {
+      resetConfig();
+      await runCli(["config", "core", "set", "tool", "understudy_code"]);
+      const { code } = await runCli(["config", "core", "reset"]);
+      expect(code).toBe(0);
+
+      const saved = readLocalConfig();
+      expect(saved.core).toBeUndefined();
+    },
+    2 * CLI_CHILD_TIMEOUT_MS + 2_000,
+  );
+});

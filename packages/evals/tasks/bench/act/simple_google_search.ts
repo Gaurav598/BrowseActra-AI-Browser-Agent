@@ -1,0 +1,34 @@
+import { defineBenchTask } from "../../../framework/defineTask.js";
+
+export default defineBenchTask(
+  { name: "simple_google_search" },
+  async ({ debugUrl, sessionUrl, stagehand, page, logger }) => {
+    try {
+      await page.goto("https://stagehand-eval-sites.vercel.app/sites/google/");
+
+      await stagehand.act('type "OpenAI" into the search bar');
+
+      await stagehand.act("press enter");
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      const expectedUrl = "https://stagehand-eval-sites.vercel.app/sites/google/openai.html";
+      const currentUrl = await page.url();
+
+      return {
+        _success: currentUrl.startsWith(expectedUrl),
+        currentUrl,
+        debugUrl,
+        sessionUrl,
+        logs: logger.getLogs(),
+      };
+    } catch (error) {
+      return {
+        _success: false,
+        error: error instanceof Error ? error.message : String(error),
+        debugUrl,
+        sessionUrl,
+        logs: logger.getLogs(),
+      };
+    }
+  },
+);

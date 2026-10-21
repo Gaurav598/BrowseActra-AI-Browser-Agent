@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "defaults": {
+    "env": "local",
+    "trials": 3,
+    "concurrency": 3,
+    "model": null,
+    "api": false,
+    "verbose": false,
+    "harness": null,
+    "successMode": null
+  },
+  "benchmarks": {
+    "webvoyager": {
+      "limit": 25
+    },
+    "onlineMind2Web": {
+      "limit": 25
+    },
+    "webtailbench": {
+      "limit": 25
+    },
+    "odysseysbench": {
+      "limit": 25
+    }
+  },
+  "harnesses": {},
+  "providers": {},
+  "verifier": {},
+  "campaign": {}
+}

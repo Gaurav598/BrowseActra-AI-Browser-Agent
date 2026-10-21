@@ -1,0 +1,93 @@
+import { z } from "zod";
+import { defineBenchTask } from "../../../framework/defineTask.js";
+
+export default defineBenchTask(
+  { name: "extract_recipe" },
+  async ({ debugUrl, sessionUrl, stagehand, page, logger }) => {
+    try {
+      await page.goto("https://stagehand-eval-sites.vercel.app/sites/allrecipes-extract/", {
+        waitUntil: "domcontentloaded",
+      });
+
+      // The locator engine prefix is required for XPath selectors.
+      const locator = page.locator("xpath=/html/body/main/article/div[3]/div[3]/div[4]");
+      const { data: recipeDetails } = await stagehand.extract(
+        "Extract the title of the number of tablespoons of olive oil needed for the steak, and the number of teaspoons of lemon juice needed for the mushroom pan sauce.",
+        z.object({
+          tablespoons_olive_oil: z
+            .number()
+            .describe("the number of tablespoons of olive oil needed for the steak"),
+          teaspoons_lemon_juice: z
+            .number()
+            .describe("the number of teaspoons of lemon juice needed for the mushroom pan sauce"),
+        }),
+        { locator },
+      );
+
+      const { tablespoons_olive_oil, teaspoons_lemon_juice } = recipeDetails;
+      const expectedTablespoons = 2;
+      const expectedTeaspoons = 2;
+
+      if (
+        tablespoons_olive_oil !== expectedTablespoons ||
+        teaspoons_lemon_juice !== expectedTeaspoons
+      ) {
+        const errors = [];
+        if (tablespoons_olive_oil !== expectedTablespoons) {
+          errors.push({
+            message:
+              "Extracted tablespoons of olive oil do not match the extracted tablespoons of olive oil",
+            expected: expectedTablespoons.toString(),
+            actual: tablespoons_olive_oil.toString(),
+          });
+        }
+        if (teaspoons_lemon_juice !== expectedTeaspoons) {
+          errors.push({
+            message:
+              "Extracted teaspoons of lemon juice do not match the extracted teaspoons of lemon juice",
+            expected: expectedTeaspoons.toString(),
+            actual: teaspoons_lemon_juice.toString(),
+          });
+        }
+
+        logger.error({
+          message: "Failed to extract correct recipe details",
+          level: 0,
+          auxiliary: {
+            errors: {
+              value: JSON.stringify(errors),
+              type: "object",
+            },
+          },
+        });
+
+        return {
+          _success: false,
+          error: "Recipe details extraction validation failed",
+          logs: logger.getLogs(),
+          debugUrl,
+          sessionUrl,
+        };
+      }
+
+      return {
+        _success: true,
+        recipeDetails: {
+          tablespoons_olive_oil: expectedTablespoons,
+          teaspoons_lemon_juice: expectedTeaspoons,
+        },
+        logs: logger.getLogs(),
+        debugUrl,
+        sessionUrl,
+      };
+    } catch (error) {
+      return {
+        _success: false,
+        error: error instanceof Error ? error.message : String(error),
+        logs: logger.getLogs(),
+        debugUrl,
+        sessionUrl,
+      };
+    }
+  },
+);
