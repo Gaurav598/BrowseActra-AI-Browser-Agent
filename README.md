@@ -1,118 +1,99 @@
-<p align="center">
-  <img src="media/browseactra-mark.svg" alt="BrowseActra mark" width="84" height="84">
-</p>
+<p align="center"><img src="media/browseactra-mark.svg" alt="BrowseActra mark" width="84" height="84"></p>
 
 # BrowseActra — AI Browser Agent & Automation Platform
 
-BrowseActra is an independently maintained browser automation project built from the open-source [Stagehand](https://github.com/browserbase/stagehand) foundation. This repository includes a browser-side runtime, a shared JSON-RPC protocol, SDKs, integrations, documentation, and an evaluation harness. The current implementation is inherited from Stagehand; BrowseActra-specific distributed workflow systems are [planned](docs/ENGINEERING_ROADMAP.md), not yet shipped.
+BrowseActra runs browser jobs through a project-owned TypeScript application: a local HTTP API, bounded worker, SQLite job ledger, Playwright-backed browser session, typed agent loop, action verifier, SDK, CLI, and web console. It can read a real page using a deterministic offline provider or use a configured OpenAI-compatible model for broader goals. Every action goes through trusted policy and returns a verification outcome; a model's success claim alone is not accepted as proof.
 
-The SDKs retain their existing `Stagehand` classes, package names, Python module, and Go import path for compatibility. Those identifiers describe the imported API and do not imply that BrowseActra is affiliated with Browserbase.
+This repository began as an import of Browserbase's open-source Stagehand. BrowseActra's application modules are new work; the original SDKs, protocol, extension, integrations, and evaluation code remain in the repository with accurate attribution. The new local application path does not use the inherited SDK as its browser engine. See [UPSTREAM.md](UPSTREAM.md) and [LICENSE](LICENSE). BrowseActra is independently maintained and is not affiliated with or endorsed by Browserbase.
 
-## What works in the current codebase
+## Run the local application
 
-- Local Chrome automation and optional Browserbase-hosted sessions through the existing SDKs.
-- Natural-language `act()`, `observe()`, and schema-guided `extract()` operations, alongside direct page and locator control.
-- A browser extension that executes the automation runtime and communicates with SDK clients through the shared protocol.
-- TypeScript, Python, and Go SDK source trees, plus integrations, examples, docs, and evaluations.
-- Timeouts, cancellation handling, trace propagation, and optional caching in specific paths. These are SDK-level mechanisms, not a durable distributed job system.
-
-Model-backed actions can incur provider charges. Browserbase sessions require separate credentials and may incur charges; neither is needed for the offline build and unit-test workflow.
-
-## Repository layout
-
-| Path                                             | Responsibility                                                     |
-| ------------------------------------------------ | ------------------------------------------------------------------ |
-| [`packages/protocol`](packages/protocol)         | Shared types, schemas, and JSON-RPC contract.                      |
-| [`packages/extension`](packages/extension)       | Runtime executed inside Chrome.                                    |
-| [`packages/sdk-ts`](packages/sdk-ts)             | TypeScript SDK and local/remote browser connections.               |
-| [`packages/sdk-python`](packages/sdk-python)     | Python SDK and generated protocol models.                          |
-| [`packages/sdk-go`](packages/sdk-go)             | Go SDK and generated protocol models.                              |
-| [`packages/integrations`](packages/integrations) | Framework and agent integrations.                                  |
-| [`packages/cli`](packages/cli)                   | Existing `browse` CLI, including Browserbase-specific commands.    |
-| [`packages/evals`](packages/evals)               | Evaluation harness and datasets; some runs need external services. |
-| [`packages/docs`](packages/docs)                 | Versioned documentation source.                                    |
-
-The SDK sends requests over Chrome DevTools Protocol to the extension. The protocol package is the contract shared by clients and runtime. Generated Python and Go files depend on those schemas, so API identifiers have intentionally not been renamed in this migration.
-
-## Prerequisites and setup
-
-- Node.js 24.x, version 24.18 or later, is the workspace's declared development runtime (`>=22.18.0` is the package engine minimum).
-- pnpm 11.11.0, as declared by the root package manifest.
-- Python 3.11 or later and `uv` for the Python SDK.
-- Go 1.26 for the Go SDK.
-- Chrome for local browser examples; `just` is optional but provides cross-language recipes.
+Prerequisites: Node.js 24.18 or later, pnpm, Python 3 for the static fixture server, and an installed Chromium browser. The browser download is a one-time prerequisite; no model key or paid service is needed for the deterministic example.
 
 ```sh
-git clone https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent.git
-cd BrowseActra-AI-Browser-Agent
 pnpm install --frozen-lockfile
-pnpm --filter ./packages/protocol build
-pnpm --filter ./packages/extension build
-pnpm --filter ./packages/sdk-ts build
+pnpm --dir packages/browseactra-runtime exec playwright install chromium
+pnpm build:browseactra
 ```
 
-For Python and Go development, also run:
+Start the deterministic fixture in one terminal:
 
 ```sh
-uv --directory packages/sdk-python sync --locked
-go -C packages/sdk-go mod download
-go -C packages/sdk-go/internal/generator mod download
+python3 -m http.server 4173 --bind 127.0.0.1 --directory docs/fixtures
 ```
 
-`just install` is the existing convenience recipe for the three ecosystems.
-
-## Environment configuration
-
-Copy `.env.example` to `.env` and set only the credentials needed for the example or integration you run:
+Start BrowseActra in another terminal:
 
 ```sh
-cp .env.example .env
+BROWSEACTRA_ALLOWED_HOSTS=127.0.0.1 pnpm --dir apps/api dev
 ```
 
-`OPENAI_API_KEY` is used by the model-backed TypeScript example below. `BROWSERBASE_API_KEY` is optional for local Chrome operation and needed for Browserbase cloud sessions. Keep real keys outside Git; `.env` is ignored. A custom Chrome binary can be selected with `CHROME_PATH`.
-
-The inherited CLI sends no analytics by default. A maintainer can opt into a project-owned collector by setting both `BROWSEACTRA_TELEMETRY_HOST` and `BROWSEACTRA_TELEMETRY_PROJECT_TOKEN`; no Browserbase collector or token is configured in this repository.
-
-## Build, checks, and tests
-
-Run from the repository root after installation:
+Open **http://127.0.0.1:3000/** in a browser, or submit a job from a third terminal:
 
 ```sh
-pnpm --filter ./packages/protocol build
-pnpm --filter ./packages/extension build
-pnpm --filter ./packages/sdk-ts build
-pnpm --filter ./packages/protocol test:unit
-pnpm --filter ./packages/extension test:unit
-pnpm --filter ./packages/sdk-ts test:unit
-pnpm --filter ./packages/protocol typecheck
-pnpm --filter ./packages/extension typecheck
-pnpm --filter ./packages/sdk-ts typecheck
-pnpm fmt:check
-pnpm lint
-uv --directory packages/sdk-python run --locked pytest
-go -C packages/sdk-go test ./...
+pnpm browseactra run "Read the page title" \
+  --url http://127.0.0.1:4173/demo.html
 ```
 
-`just check` and `just test` include broader cross-language validation. Browser-backed tests, evaluations, and examples have additional prerequisites; review their commands before running them. Build and verification outcomes for this migration belong in the migration commit or CI record, rather than being inferred from this README.
+The result comes from a real local Chromium session. The no-key provider supports the bounded instructions `Read the page title` and `Read the page text`; it is a deterministic interpreter for local use, not a simulated browser. The API runs the worker in the same process and stores jobs, events, and receipts in `apps/api/data/browseactra.db` by default. Stop the servers with `Ctrl-C`.
 
-## Basic usage
+## What the application implements
 
-This checked-in example exercises the actual TypeScript SDK against a local browser and `example.com`:
+| Component                                                           | Current behavior                                                                                                                                |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Browser runtime](packages/browseactra-runtime)                     | Own session interface and Playwright implementation for navigation, click, fill, select, text, and bounded page observation.                    |
+| [Agent](packages/browseactra-runtime/src/agent.ts)                  | Observe → decide → policy → execute → verify loop with a step limit and cancellation.                                                           |
+| [Model providers](packages/browseactra-runtime/src/provider.ts)     | Deterministic provider for tests and an optional OpenAI-compatible Chat Completions adapter.                                                    |
+| [Action verifier](packages/browseactra-verifier)                    | Explicit `verified`, `rejected`, or `indeterminate` receipts from observed conditions.                                                          |
+| [Executor](packages/browseactra-executor)                           | Wires browser, provider, action policy, events, and receipts into one job execution.                                                            |
+| [API and worker](apps/api)                                          | Versioned job endpoints, bearer-key option, SQLite idempotency, bounded concurrent claims, lease tokens, cancellation, and restart uncertainty. |
+| [SDK](packages/browseactra-sdk) and [CLI](packages/browseactra-cli) | Project-owned clients for creating, inspecting, waiting for, and cancelling jobs.                                                               |
+| [Web console](apps/web)                                             | Real task submission, status, progress events, receipts, structured output, and cancellation through the API.                                   |
+
+The architecture is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and the [system design](docs/SYSTEM_DESIGN.md). The first implementation is a modular monolith with one local API/worker process. It is not yet a multi-host distributed system or a resumable workflow engine with step checkpoints.
+
+## Model-backed tasks and action policy
+
+Set `BROWSEACTRA_MODEL_API_KEY` and `BROWSEACTRA_MODEL_NAME` to enable the OpenAI-compatible provider. `BROWSEACTRA_MODEL_BASE_URL` can point to a compatible HTTPS endpoint or a loopback test server. Model calls may incur charges; the normal local demonstration and automated tests do not require one.
+
+The default policy allows navigation and reading text. Click, fill, and select require both `BROWSEACTRA_ALLOW_MUTATIONS=true` and an exact trusted entry in `BROWSEACTRA_APPROVED_MUTATIONS` for the target host, action type, and selector. The action must declare a postcondition that was false before execution and true afterward. A matching label or webpage instruction never grants approval. Model-generated final output is accepted only when its values are directly grounded in observed browser state; unsupported summaries or claims become `indeterminate`. See [docs/SECURITY.md](docs/SECURITY.md) before enabling mutations.
+
+Other configuration includes `BROWSEACTRA_HOST` (default `127.0.0.1`), `BROWSEACTRA_PORT` (default `3000`), `BROWSEACTRA_DATABASE_PATH`, `BROWSEACTRA_ALLOWED_HOSTS`, `BROWSEACTRA_API_KEY`, and `BROWSEACTRA_MAX_CONCURRENT` (default `2`). Every API browser target needs an explicit operator host allowlist entry; a non-loopback bind also requires a strong key. Details are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## API and SDK
+
+The versioned API accepts jobs at `POST /api/v1/jobs` and exposes job lists, details, cancellation, events, and verification receipts. It serves the UI at `/`. See [docs/API.md](docs/API.md) for request validation, authentication, errors, and SSE behavior.
+
+The project-owned TypeScript SDK uses the same API:
+
+```typescript
+import { BrowseActraClient } from "@browseactra/sdk";
+
+const client = new BrowseActraClient({ baseUrl: "http://127.0.0.1:3000" });
+const job = await client.jobs.create({
+  instruction: "Read the page title",
+  url: "http://127.0.0.1:4173/demo.html",
+});
+const result = await client.jobs.wait(job.id);
+console.log(result.status, result.result);
+```
+
+`@browseactra/sdk` is currently a private workspace package, not a published npm release. A caller outside this workspace can use the documented HTTP API.
+
+## Development and testing
 
 ```sh
-pnpm exec tsx packages/sdk-ts/examples/act.ts
+node scripts/brand-check.mjs
+pnpm build:browseactra
+pnpm typecheck:browseactra
+pnpm test:browseactra
+pnpm exec tsx tests/e2e/local-browser.ts
 ```
 
-It loads `.env`, requires `OPENAI_API_KEY`, opens Chrome, and calls `Stagehand.create()` and `act()`. The SDK import and class name intentionally keep their established identities. See [`packages/sdk-ts/examples/act.ts`](packages/sdk-ts/examples/act.ts) for executable source and [`packages/sdk-ts/examples`](packages/sdk-ts/examples) for more examples.
+The [testing guide](docs/TESTING.md) separates offline unit checks from real-browser integration and manual smoke tests. [Performance notes](docs/PERFORMANCE.md) state which measurements have not yet been established. The [engineering roadmap](docs/ENGINEERING_ROADMAP.md) tracks remaining work, including durable step checkpoints, richer verification, DNS-aware egress controls, human approval, and multi-host coordination.
 
-## Technology and engineering status
+## Scope of the imported foundation
 
-The workspace uses TypeScript, Node.js, pnpm, Turbo, Vite, Vitest, Zod, Python, uv, Go, Chrome DevTools Protocol, and a Chrome extension. The imported source includes versioned docs and release tooling. Existing package names and version numbers describe the upstream-compatible SDKs; this repository is not publishing a new BrowseActra package release as part of its initial migration.
+The historical Stagehand-derived packages remain under `packages/sdk-ts`, `packages/sdk-python`, `packages/sdk-go`, `packages/protocol`, `packages/extension`, `packages/cli`, `packages/integrations`, `packages/evals`, and `packages/docs`. Their code identifiers and dependency references are retained where required for compatibility and attribution. The versioned site in `packages/docs` is an imported SDK reference, not the current BrowseActra application documentation. The [documentation index](docs/README.md) points to current guides.
 
-The [engineering roadmap](docs/ENGINEERING_ROADMAP.md) starts with deterministic action verification, then durable execution, safe recovery, persistent jobs, worker coordination, and security controls. Each milestone identifies existing upstream capabilities and the missing BrowseActra subsystem.
-
-## Contributing, history, and license
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository's development conventions. [UPSTREAM.md](UPSTREAM.md) records the imported source and attribution. The [changelog](CHANGELOG.md) distinguishes the BrowseActra migration from Stagehand's historical releases.
-
-The repository is licensed under [MIT](LICENSE). The original Browserbase copyright and permission notices remain in the root and nested license files. BrowseActra is independently maintained by [Gaurav598](https://github.com/Gaurav598) and is not affiliated with or endorsed by Browserbase.
+The original root MIT license and nested CLI MIT notice are preserved. Historical releases in [CHANGELOG.md](CHANGELOG.md) remain labeled as Stagehand history; the initial BrowseActra entry describes the repository migration. Contributions and reports belong to this repository's [issue tracker](https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent/issues) and [contributor guide](CONTRIBUTING.md).

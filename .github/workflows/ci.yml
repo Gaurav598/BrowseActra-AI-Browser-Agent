@@ -51,6 +51,21 @@ jobs:
           pnpm --dir packages/protocol typecheck
           pnpm --dir packages/extension typecheck
           pnpm --dir packages/sdk-ts typecheck
+          pnpm --dir packages/browseactra-runtime typecheck
+          pnpm --dir packages/browseactra-verifier typecheck
+          pnpm --dir packages/browseactra-executor typecheck
+          pnpm --dir packages/browseactra-sdk typecheck
+          pnpm --dir packages/browseactra-cli typecheck
+          pnpm --dir apps/api typecheck
+
+      - name: Build BrowseActra application, SDK, and CLI
+        run: pnpm build:browseactra
+
+      - name: Check BrowseActra identity
+        run: pnpm brand:check
+
+      - name: Check formatting
+        run: pnpm fmt:check
 
       - name: Lint workspace
         run: pnpm lint
@@ -60,3 +75,14 @@ jobs:
           pnpm --dir packages/protocol test:unit
           pnpm --dir packages/extension test:unit
           pnpm --dir packages/sdk-ts test:unit
+          pnpm --dir packages/browseactra-runtime test
+          pnpm --dir packages/browseactra-verifier test
+          pnpm --dir packages/browseactra-executor test
+          pnpm --dir packages/browseactra-sdk test
+          pnpm --dir apps/api test
+
+      - name: Install Chromium for local integration test
+        run: pnpm --dir packages/browseactra-runtime exec playwright install --with-deps chromium
+
+      - name: Run deterministic browser end-to-end test
+        run: pnpm exec tsx tests/e2e/local-browser.ts

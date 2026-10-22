@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0c1524" />
+    <meta name="description" content="BrowseActra local browser automation dashboard" />
+    <title>BrowseActra · Browser jobs</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="masthead">
+      <div class="identity">
+        <svg class="mark" viewBox="0 0 96 96" role="img" aria-label="BrowseActra logo">
+          <rect x="3" y="3" width="90" height="90" rx="23" fill="#101B2B" />
+          <path
+            d="M24 28h48M24 44h28M24 60h38"
+            fill="none"
+            stroke="#376381"
+            stroke-width="3"
+            stroke-linecap="round"
+          />
+          <path
+            d="M28 66V35l20 13 20-20"
+            fill="none"
+            stroke="#2DD4BF"
+            stroke-width="7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <circle cx="28" cy="35" r="5" fill="#E6FFFA" />
+          <circle cx="48" cy="48" r="5" fill="#E6FFFA" />
+          <circle cx="68" cy="28" r="5" fill="#E6FFFA" />
+        </svg>
+        <div>
+          <strong>BrowseActra</strong>
+          <span>Local browser job console</span>
+        </div>
+      </div>
+      <div class="connection">
+        <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
+        <span id="connection-label">Checking API…</span>
+      </div>
+    </header>
+
+    <main id="main" class="workspace">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Developer console</p>
+          <h1 id="page-title">Run a browser task</h1>
+          <p>
+            Submit a goal, follow real execution events, and inspect verification receipts from the
+            local BrowseActra API.
+          </p>
+        </div>
+        <details class="access-panel">
+          <summary>API access</summary>
+          <label for="api-key">Bearer key <span class="optional">if configured</span></label>
+          <input
+            id="api-key"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Enter local API key"
+          />
+          <p>The key stays in this tab’s memory. It is not saved by the page.</p>
+        </details>
+      </section>
+
+      <section class="composer panel" aria-labelledby="new-job-title">
+        <div class="panel-heading">
+          <h2 id="new-job-title">New job</h2>
+          <span class="panel-note">Runs in a real browser</span>
+        </div>
+        <form id="job-form">
+          <div class="field-row">
+            <div class="field url-field">
+              <label for="target-url">Starting URL</label>
+              <input
+                id="target-url"
+                name="url"
+                type="url"
+                inputmode="url"
+                required
+                placeholder="https://example.com"
+                value="https://example.com"
+              />
+            </div>
+            <div class="field instruction-field">
+              <label for="instruction">Task instruction</label>
+              <input
+                id="instruction"
+                name="instruction"
+                type="text"
+                required
+                maxlength="2000"
+                placeholder="Read the page title"
+              />
+            </div>
+          </div>
+          <div class="form-footer">
+            <p>
+              Use sites you are authorized to automate. Action policy and allowed domains are
+              enforced by the server.
+            </p>
+            <button id="submit-job" class="button primary" type="submit">
+              Run task <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <p id="message" class="message" role="status" aria-live="polite"></p>
+
+      <div class="content-grid">
+        <section class="jobs panel" aria-labelledby="jobs-title">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">Queue</p>
+              <h2 id="jobs-title">Jobs</h2>
+            </div>
+            <button id="refresh-jobs" class="button ghost" type="button">Refresh</button>
+          </div>
+          <ul id="job-list" class="job-list" aria-label="Jobs"></ul>
+          <p id="jobs-empty" class="empty-state">No jobs yet. Submit a task above to begin.</p>
+        </section>
+
+        <section class="inspector panel" aria-labelledby="inspector-title">
+          <div class="panel-heading inspector-heading">
+            <div>
+              <p class="eyebrow">Inspector</p>
+              <h2 id="inspector-title">Job details</h2>
+            </div>
+            <button id="cancel-job" class="button danger" type="button" hidden>Cancel job</button>
+          </div>
+
+          <div id="inspector-empty" class="empty-state detail-empty">
+            Select a job to inspect live progress and results.
+          </div>
+          <div id="inspector-content" hidden>
+            <div class="detail-summary">
+              <div>
+                <span class="detail-label">Status</span
+                ><strong id="detail-status" class="status"></strong>
+              </div>
+              <div><span class="detail-label">Job ID</span><code id="detail-id"></code></div>
+              <div><span class="detail-label">Started</span><span id="detail-started"></span></div>
+            </div>
+            <div class="detail-goal">
+              <span class="detail-label">Goal</span>
+              <p id="detail-instruction"></p>
+              <a id="detail-url" target="_blank" rel="noopener noreferrer"></a>
+            </div>
+
+            <div class="tabs" role="tablist" aria-label="Job information">
+              <button
+                type="button"
+                role="tab"
+                id="tab-progress"
+                aria-controls="panel-progress"
+                aria-selected="true"
+                tabindex="0"
+              >
+                Progress
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="tab-receipts"
+                aria-controls="panel-receipts"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                Receipts
+              </button>
+              <button
+                type="button"
+                role="tab"
+                id="tab-output"
+                aria-controls="panel-output"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                Output
+              </button>
+            </div>
+
+            <div
+              id="panel-progress"
+              role="tabpanel"
+              aria-labelledby="tab-progress"
+              class="tab-panel"
+            >
+              <ol id="event-list" class="event-list"></ol>
+              <p id="events-empty" class="empty-state">Waiting for execution events.</p>
+            </div>
+            <div
+              id="panel-receipts"
+              role="tabpanel"
+              aria-labelledby="tab-receipts"
+              class="tab-panel"
+              hidden
+            >
+              <ul id="receipt-list" class="receipt-list"></ul>
+              <p id="receipts-empty" class="empty-state">No verification receipts yet.</p>
+            </div>
+            <div
+              id="panel-output"
+              role="tabpanel"
+              aria-labelledby="tab-output"
+              class="tab-panel"
+              hidden
+            >
+              <p id="output-empty" class="empty-state">
+                The structured result will appear when the job finishes.
+              </p>
+              <pre id="job-output" class="json-output" hidden></pre>
+              <p id="job-error" class="job-error" hidden></p>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <span>BrowseActra</span><span>Results come from the connected local API.</span>
+    </footer>
+  </body>
+</html>

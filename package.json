@@ -1,6 +1,6 @@
 {
   "name": "browseactra-workspace",
-  "version": "4.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "BrowseActra — AI Browser Agent & Automation Platform workspace",
   "homepage": "https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent",
@@ -14,6 +14,13 @@
   },
   "type": "module",
   "scripts": {
+    "dev": "pnpm --dir apps/api dev",
+    "dev:api": "pnpm --dir apps/api dev",
+    "build:browseactra": "pnpm --dir packages/browseactra-sdk build && pnpm --dir packages/browseactra-cli build && pnpm --dir apps/api build",
+    "browseactra": "node packages/browseactra-cli/dist/cli.js",
+    "test:browseactra": "pnpm --dir packages/browseactra-runtime test && pnpm --dir packages/browseactra-verifier test && pnpm --dir packages/browseactra-executor test && pnpm --dir packages/browseactra-sdk test && pnpm --dir apps/api test",
+    "typecheck:browseactra": "pnpm --dir packages/browseactra-runtime typecheck && pnpm --dir packages/browseactra-verifier typecheck && pnpm --dir packages/browseactra-executor typecheck && pnpm --dir packages/browseactra-sdk typecheck && pnpm --dir packages/browseactra-cli typecheck && pnpm --dir apps/api typecheck",
+    "brand:check": "node scripts/brand-check.mjs",
     "check": "turbo run fmt:check lint typecheck",
     "docs": "pnpm --filter ./packages/docs dev",
     "fmt": "oxfmt --write .",

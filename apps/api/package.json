@@ -1,0 +1,29 @@
+{
+  "name": "@browseactra/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BrowseActra local API and durable job worker",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --external:playwright --outfile=dist/main.js",
+    "dev": "tsx src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@browseactra/executor": "workspace:*",
+    "@browseactra/runtime": "workspace:*",
+    "playwright": "1.56.1"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=24.18.0"
+  }
+}

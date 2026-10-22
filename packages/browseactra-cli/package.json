@@ -1,0 +1,20 @@
+{
+  "name": "@browseactra/cli",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "browseactra": "./dist/cli.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@browseactra/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

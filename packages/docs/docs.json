@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
-  "name": "BrowseActra",
+  "name": "BrowseActra legacy SDK reference",
   "colors": {
     "primary": "#0F766E",
     "light": "#0F766E",
@@ -12,7 +12,7 @@
     "indexing": "all",
     "metatags": {
       "og:type": "website",
-      "og:site_name": "BrowseActra Docs"
+      "og:site_name": "BrowseActra legacy SDK reference"
     }
   },
   "api": {

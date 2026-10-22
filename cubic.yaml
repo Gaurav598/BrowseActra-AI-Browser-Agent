@@ -9,4 +9,6 @@ reviews:
       file_paths:
         - .cubic/docs-style-guide.md
       include:
-        - packages/docs/**
+        - README.md
+        - docs/**
+        - apps/web/**

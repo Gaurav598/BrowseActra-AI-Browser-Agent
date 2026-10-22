@@ -1,6 +1,6 @@
-# BrowseActra documentation source
+# Imported SDK documentation reference
 
-This site contains imported Stagehand v2, v3, and v4 documentation. V4 is the default version. Project-level navigation and identity belong to BrowseActra; SDK package names and API references retain their compatibility names. Some versioned content still documents upstream services and historical usage and should be reviewed before any public documentation deployment.
+This site contains imported Stagehand v2, v3, and v4 documentation. V4 is the default version. It is retained as a compatibility and historical reference for the imported SDKs. It is **not** the current BrowseActra application guide; use [`docs/README.md`](../../docs/README.md) for that. Some versioned content still documents upstream services, examples, and historical support channels. This site is not configured for BrowseActra publication.
 
 ## Local development
 

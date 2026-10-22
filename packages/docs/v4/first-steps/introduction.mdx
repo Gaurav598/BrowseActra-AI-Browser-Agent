@@ -4,7 +4,7 @@ sidebarTitle: "Introduction"
 description: "BrowseActra's browser automation foundation and compatible Stagehand SDKs."
 ---
 
-BrowseActra is an independently maintained project derived from the open-source Stagehand foundation. The current SDKs provide browser automation across TypeScript, Python, and Go. Their `Stagehand` API names remain for compatibility. BrowseActra is not affiliated with Browserbase. See the repository's [upstream attribution](https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent/blob/main/UPSTREAM.md).
+This is a legacy reference for the imported Stagehand SDKs. BrowseActra is an independently maintained application with [current documentation](https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent/blob/main/docs/README.md). The SDKs on this page retain their `Stagehand` API names for compatibility. BrowseActra is not affiliated with Browserbase. See the repository's [upstream attribution](https://github.com/Gaurav598/BrowseActra-AI-Browser-Agent/blob/main/UPSTREAM.md).
 
 ## The problem with browser automation
 
@@ -163,49 +163,34 @@ if _, err := page.Screenshot(ctx, nil); err != nil {
 - **Metrics are built in:** Read per-method token usage and inference timing with [`metrics()`](/v4/reference/stagehand).
 - **Built for agent harnesses:** Stagehand is the hands. Bring your own agent as the brain (LangChain, CrewAI, Mastra, or a custom loop).
 
-## Built for modern development
-Stagehand is designed for developers building production browser automations and AI agents that need reliable web access.
+## About the imported SDK
+
+The source documented here is derived from Stagehand and was created by Browserbase and contributors. It remains in the repository as a compatibility reference while BrowseActra's project-owned runtime evolves.
 
 <AccordionGroup>
   <Accordion title="Works everywhere">
     Compatible with all Chromium-based browsers: Chrome, Edge, Arc, Brave, and more. Stagehand drives the browser over the Chrome DevTools Protocol, so there is no Playwright or Puppeteer dependency.
   </Accordion>
-  <Accordion title="Built by Browserbase">
-    Created and maintained by the team behind enterprise browser infrastructure.
+  <Accordion title="Provenance">
+    The imported implementation and its original MIT copyright notice are described in the repository's UPSTREAM.md and LICENSE files.
   </Accordion>
 </AccordionGroup>
 
-## Get started in 60 seconds
-<Info>
-  Browserbase recommends running Stagehand on [Browserbase](https://www.browserbase.com). A hosted browser is what enables [server-side caching](/v4/best-practices/caching) and the [Model Gateway](/v4/configuration/models#model-gateway).
-</Info>
+## Reference guides
+
 <CardGroup cols={2}>
   <Card
     title="Quickstart"
     icon="rocket"
     href="/v4/first-steps/quickstart"
   >
-    Build your first automation in under a minute
-  </Card>
-  <Card
-    title="View templates"
-    icon="code"
-    href="https://www.browserbase.com/templates"
-  >
-    See real-world automation examples
-  </Card>
-  <Card
-    title="Join Discord"
-    icon="discord"
-    href="https://discord.gg/stagehand"
-  >
-    Get help from the community
+    Run a compatibility example with the imported SDK
   </Card>
   <Card
     title="Installation"
     icon="download"
     href="/v4/first-steps/installation"
   >
-    Add Stagehand to your project
+    Review the inherited package setup
   </Card>
 </CardGroup>

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>BrowseActra local fixture</title>
+  </head>
+  <body>
+    <main>
+      <h1>BrowseActra local fixture</h1>
+      <p id="summary">A deterministic page for local browser jobs.</p>
+      <label for="note">Note</label>
+      <input id="note" name="note" type="text" />
+      <button id="confirm" type="button">Confirm note</button>
+      <p id="confirmation" aria-live="polite">No note confirmed.</p>
+    </main>
+    <script>
+      document.querySelector("#confirm").addEventListener("click", () => {
+        document.querySelector("#confirmation").textContent =
+          `Confirmed: ${document.querySelector("#note").value}`;
+      });
+    </script>
+  </body>
+</html>
